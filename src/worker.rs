@@ -55,6 +55,30 @@ impl<A: Allocate> Worker<A> {
         }
     }
 
+    /// Sets worker logging based on the presence of an environment variable.
+    pub fn set_environment_logging(&mut self, string: &str) {
+
+        // If an environment variable is set, use it as the default timely logging.
+        if let Ok(addr) = ::std::env::var(string) {
+
+            use ::std::net::TcpStream;
+            use ::logging::{BatchLogger, TimelyEvent};
+            use ::dataflow::operators::capture::EventWriter;
+
+            if let Ok(stream) = TcpStream::connect(&addr) {
+                let writer = EventWriter::new(stream);
+                let mut logger = BatchLogger::new(writer);
+                self.log_register()
+                    .insert::<TimelyEvent,_>("timely", move |time, data|
+                        logger.publish_batch(time, data)
+                    );
+            }
+            else {
+                panic!("Could not connect logging stream to: {:?}", addr);
+            }
+        }
+    }
+
     /// Performs one step of the computation.
     ///
     /// A step gives each dataflow operator a chance to run, and is the

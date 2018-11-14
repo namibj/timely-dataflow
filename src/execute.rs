@@ -154,29 +154,8 @@ where
     let (allocators, other) = config.try_build()?;
 
     initialize_from(allocators, other, move |allocator| {
-
         let mut worker = Worker::new(allocator);
-
-        // If an environment variable is set, use it as the default timely logging.
-        if let Ok(addr) = ::std::env::var("TIMELY_WORKER_LOG_ADDR") {
-
-            use ::std::net::TcpStream;
-            use ::logging::{BatchLogger, TimelyEvent};
-            use ::dataflow::operators::capture::EventWriter;
-
-            if let Ok(stream) = TcpStream::connect(&addr) {
-                let writer = EventWriter::new(stream);
-                let mut logger = BatchLogger::new(writer);
-                worker.log_register()
-                    .insert::<TimelyEvent,_>("timely", move |time, data|
-                        logger.publish_batch(time, data)
-                    );
-            }
-            else {
-                panic!("Could not connect logging stream to: {:?}", addr);
-            }
-        }
-
+        worker.set_environment_logging("TIMELY_WORKER_LOG_ADDR");
         let result = func(&mut worker);
         while worker.step() { }
         result
