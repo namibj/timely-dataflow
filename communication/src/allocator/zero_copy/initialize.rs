@@ -1,10 +1,10 @@
 //! Network initialization.
 
 use std::sync::Arc;
-use allocator::Process;
+use allocator::AllocateBuilder;
 use networking::create_sockets;
 use super::tcp::{send_loop, recv_loop};
-use super::allocator::{TcpBuilder, new_vector};
+use super::allocator::TcpBuilder;
 
 /// Join handles for send and receive threads.
 ///
@@ -32,22 +32,22 @@ use ::logging::{CommunicationSetup, CommunicationEvent};
 use logging_core::Logger;
 
 /// Initializes network connections
-pub fn initialize_networking(
+pub fn initialize_networking<A: AllocateBuilder>(
     addresses: Vec<String>,
     my_index: usize,
     threads: usize,
     noisy: bool,
-    log_sender: Box<Fn(CommunicationSetup)->Option<Logger<CommunicationEvent, CommunicationSetup>>+Send+Sync>)
--> ::std::io::Result<(Vec<TcpBuilder<Process>>, CommsGuard)>
-// where
-//     F: Fn(CommunicationSetup)->Option<Logger<CommunicationEvent>>+Send+Sync+'static,
+    log_sender: Box<Fn(CommunicationSetup)->Option<Logger<CommunicationEvent, CommunicationSetup>>+Send+Sync>,
+    inner_builders: Vec<A>,
+)
+-> ::std::io::Result<(Vec<TcpBuilder<A>>, CommsGuard)>
 {
     let log_sender = Arc::new(log_sender);
     let processes = addresses.len();
 
     let mut results = create_sockets(addresses, my_index, noisy)?;
 
-    let (builders, remote_recvs, remote_sends) = new_vector(my_index, threads, processes);
+    let (builders, remote_recvs, remote_sends) = TcpBuilder::new_vector(my_index, threads, processes, inner_builders);
     let mut remote_recv_iter = remote_recvs.into_iter();
     let mut remote_send_iter = remote_sends.into_iter();
 

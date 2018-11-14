@@ -2,14 +2,13 @@
 use std::rc::Rc;
 use std::cell::RefCell;
 use std::collections::{VecDeque, HashMap};
-// use std::sync::mpsc::{channel, Sender, Receiver};
 
 use bytes::arc::Bytes;
 
 use networking::MessageHeader;
 
-use {Allocate, Data, Push, Pull};
-use allocator::{Message, Process};
+use {Allocate, allocator::AllocateBuilder, Data, Push, Pull};
+use allocator::Message;
 
 use super::bytes_exchange::{BytesPull, SendEndpoint, MergeQueue, Signal};
 use super::push_pull::{Pusher, PullerInner};
@@ -20,7 +19,7 @@ use super::push_pull::{Pusher, PullerInner};
 /// threads (specifically, the `Rc<RefCell<_>>` local channels). So, we must package up the state
 /// shared between threads here, and then provide a method that will instantiate the non-movable
 /// members once in the destination thread.
-pub struct TcpBuilder<A: Allocate> {
+pub struct TcpBuilder<A: AllocateBuilder> {
     inner:      A,
     index:      usize,              // number out of peers
     peers:      usize,              // number of peer allocators.
@@ -29,53 +28,63 @@ pub struct TcpBuilder<A: Allocate> {
     signal:     Signal,
 }
 
-/// Creates a vector of builders, sharing appropriate state.
-pub fn new_vector(
-    my_process: usize,
-    threads: usize,
-    processes: usize)
-// -> (Vec<TcpBuilder<Process>>, Vec<Receiver<Bytes>>, Vec<Sender<Bytes>>) {
--> (Vec<TcpBuilder<Process>>, Vec<(Vec<MergeQueue>, Signal)>, Vec<Vec<MergeQueue>>) {
+impl<A: AllocateBuilder> TcpBuilder<A> {
+    /// Creates a vector of builders, sharing appropriate state.
+    pub fn new_vector(
+        my_process: usize,
+        threads: usize,
+        processes: usize,
+        inner_builders: Vec<A>,
+        )
+    // -> (Vec<TcpBuilder<Process>>, Vec<Receiver<Bytes>>, Vec<Sender<Bytes>>) {
+    -> (Vec<Self>, Vec<(Vec<MergeQueue>, Signal)>, Vec<Vec<MergeQueue>>) {
 
-    // The results are a vector of builders, as well as the necessary shared state to build each
-    // of the send and receive communication threads, respectively.
+        // The results are a vector of builders, as well as the necessary shared state to build each
+        // of the send and receive communication threads, respectively.
 
-    let worker_signals: Vec<Signal> = (0 .. threads).map(|_| Signal::new()).collect();
-    let network_signals: Vec<Signal> = (0 .. processes-1).map(|_| Signal::new()).collect();
+        // Should have as many inner builders as threads.
+        assert_eq!(threads, inner_builders.len());
 
-    let worker_to_network: Vec<Vec<_>> = (0 .. threads).map(|_| (0 .. processes-1).map(|p| MergeQueue::new(network_signals[p].clone())).collect()).collect();
-    let network_to_worker: Vec<Vec<_>> = (0 .. processes-1).map(|_| (0 .. threads).map(|t| MergeQueue::new(worker_signals[t].clone())).collect()).collect();
+        let worker_signals: Vec<Signal> = (0 .. threads).map(|_| Signal::new()).collect();
+        let network_signals: Vec<Signal> = (0 .. processes-1).map(|_| Signal::new()).collect();
 
-    let worker_from_network: Vec<Vec<_>> = (0 .. threads).map(|t| (0 .. processes-1).map(|p| network_to_worker[p][t].clone()).collect()).collect();
-    let network_from_worker: Vec<Vec<_>> = (0 .. processes-1).map(|p| (0 .. threads).map(|t| worker_to_network[t][p].clone()).collect()).collect();
+        let worker_to_network: Vec<Vec<_>> = (0 .. threads).map(|_| (0 .. processes-1).map(|p| MergeQueue::new(network_signals[p].clone())).collect()).collect();
+        let network_to_worker: Vec<Vec<_>> = (0 .. processes-1).map(|_| (0 .. threads).map(|t| MergeQueue::new(worker_signals[t].clone())).collect()).collect();
 
-    let builders =
-    Process::new_vector(threads)
-        .into_iter()
-        .zip(worker_signals)
-        .zip(worker_to_network)
-        .zip(worker_from_network)
-        .enumerate()
-        .map(|(index, (((inner, signal), sends), recvs))| {
-            TcpBuilder {
-                inner,
-                index: my_process * threads + index,
-                peers: threads * processes,
-                sends,
-                recvs,
-                signal,
-            }})
-        .collect();
+        let worker_from_network: Vec<Vec<_>> = (0 .. threads).map(|t| (0 .. processes-1).map(|p| network_to_worker[p][t].clone()).collect()).collect();
+        let network_from_worker: Vec<Vec<_>> = (0 .. processes-1).map(|p| (0 .. threads).map(|t| worker_to_network[t][p].clone()).collect()).collect();
 
-    let sends = network_from_worker.into_iter().zip(network_signals).collect();
+        let builders =
+        // Process::new_vector(threads)
+        inner_builders
+            .into_iter()
+            .zip(worker_signals)
+            .zip(worker_to_network)
+            .zip(worker_from_network)
+            .enumerate()
+            .map(|(index, (((inner, signal), sends), recvs))| {
+                TcpBuilder {
+                    inner,
+                    index: my_process * threads + index,
+                    peers: threads * processes,
+                    sends,
+                    recvs,
+                    signal,
+                }})
+            .collect();
 
-    (builders, sends, network_to_worker)
+        let sends = network_from_worker.into_iter().zip(network_signals).collect();
+
+        (builders, sends, network_to_worker)
+    }
 }
 
-impl<A: Allocate> TcpBuilder<A> {
+impl<A: AllocateBuilder> AllocateBuilder for TcpBuilder<A> {
+
+    type Allocator = TcpAllocator<A::Allocator>;
 
     /// Builds a `TcpAllocator`, instantiating `Rc<RefCell<_>>` elements.
-    pub fn build(self) -> TcpAllocator<A> {
+    fn build(self) -> Self::Allocator {
 
         let mut sends = Vec::new();
         for send in self.sends.into_iter() {
@@ -84,7 +93,7 @@ impl<A: Allocate> TcpBuilder<A> {
         }
 
         TcpAllocator {
-            inner: self.inner,
+            inner: self.inner.build(),
             index: self.index,
             peers: self.peers,
             // allocated: 0,
@@ -166,6 +175,8 @@ impl<A: Allocate> Allocate for TcpAllocator<A> {
     // Perform preparatory work, most likely reading binary buffers from self.recv.
     #[inline(never)]
     fn pre_work(&mut self) {
+
+        self.inner.pre_work();
 
         for recv in self.recvs.iter_mut() {
             recv.drain_into(&mut self.staged);

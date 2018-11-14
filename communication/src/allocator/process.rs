@@ -21,9 +21,9 @@ impl Process {
     /// Access the wrapped inner allocator.
     pub fn inner<'a>(&'a mut self) -> &'a mut Thread { &mut self.inner }
     /// Allocate a list of connected intra-process allocators.
-    pub fn new_vector(count: usize) -> Vec<Process> {
+    pub fn new_vector(count: usize) -> Vec<Self> {
         let channels = Arc::new(Mutex::new(HashMap::new()));
-        (0 .. count).map(|index| Process {
+        (0 .. count).map(|index| Self {
             inner:      Thread,
             index:      index,
             peers:      count,

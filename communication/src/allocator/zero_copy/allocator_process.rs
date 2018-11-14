@@ -33,7 +33,7 @@ impl ProcessBuilder {
     /// Creates a vector of builders, sharing appropriate state.
     ///
     /// This method requires access to a byte exchanger, from which it mints channels.
-    pub fn new_vector(count: usize) -> Vec<ProcessBuilder> {
+    pub fn new_vector(count: usize) -> Vec<Self> {
 
         let signals: Vec<Signal> = (0 .. count).map(|_| Signal::new()).collect();
 
@@ -94,7 +94,6 @@ impl AllocateBuilder for ProcessBuilder {
     fn build(self) -> Self::Allocator {
         self.build()
     }
-
 }
 
 /// A serializing allocator for inter-thread intra-process communication.

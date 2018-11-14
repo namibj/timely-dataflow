@@ -15,7 +15,6 @@ use allocator::zero_copy::initialize::initialize_networking;
 use ::logging::{CommunicationSetup, CommunicationEvent};
 use logging_core::Logger;
 
-
 /// Possible configurations for the communication infrastructure.
 pub enum Configuration {
     /// Use one thread.
@@ -105,7 +104,8 @@ impl Configuration {
                 Ok((Process::new_vector(threads).into_iter().map(|x| GenericBuilder::Process(x)).collect(), Box::new(())))
             },
             Configuration::Cluster { threads, process, addresses, report, log_fn } => {
-                if let Ok((stuff, guard)) = initialize_networking(addresses, process, threads, report, log_fn) {
+                let process_builders = Process::new_vector(threads);
+                if let Ok((stuff, guard)) = initialize_networking(addresses, process, threads, report, log_fn, process_builders) {
                     Ok((stuff.into_iter().map(|x| GenericBuilder::ZeroCopy(x)).collect(), Box::new(guard)))
                 }
                 else {
