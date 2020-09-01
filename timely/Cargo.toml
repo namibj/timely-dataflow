@@ -28,5 +28,7 @@ timely_logging = { path = "../logging", version = "0.10" }
 timely_communication = { path = "../communication", version = "0.10" }
 
 [dev-dependencies]
-timely_sort="0.1.6"
+#timely_sort="0.1.6"
+timely_sort = { path = "../sort" }
+#, version = "0.1.6" }
 rand="0.4"
